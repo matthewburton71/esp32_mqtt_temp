@@ -22,7 +22,7 @@ typedef WebServer WiFiWebServer;
 // Data wire is plugged TO GPIO 4
 #define ONE_WIRE_BUS 15
 
-#define HOSTNAME_BASE "esp32-"
+#define HOSTNAME_BASE "ESP32-"
 const int WAIT = 10 * 1000; // 10 sec
 
 const int STATUS_LED = LED_BUILTIN;
@@ -234,6 +234,11 @@ void setup()
   loadAux(AUX_MQTTSETTING);
   loadAux(AUX_MQTTSAVE);
 
+  // Set the default hostname
+  // Make the name using the Chip ID - last 4 dig the MAC Address.
+  hostName = HOSTNAME_BASE + String(GET_CHIPID(), HEX);
+  Serial.println("Default host name: " + hostName);
+
   // Serial.println("loading config...");
   AutoConnectAux *setting = Portal.aux(AUX_MQTTSETTING);
   if (setting)
@@ -243,16 +248,25 @@ void setup()
     loadParams(mqtt_setting, args);
     AutoConnectCheckbox &uniqueidElm = mqtt_setting["uniqueid"].as<AutoConnectCheckbox>();
     AutoConnectInput &hostnameElm = mqtt_setting["hostname"].as<AutoConnectInput>();
+    AutoConnectInput &channelidElm = mqtt_setting["channelid"].as<AutoConnectInput>();
     if (uniqueidElm.checked)
     {
-      Config.apid = String("ESP") + "-" + String(GET_CHIPID(), HEX);
-      Serial.println("apid set to " + Config.apid);
+      // Config.apid = String("ESP") + "-" + String(GET_CHIPID(), HEX);
+      Config.apid = hostName;
     }
+    Serial.println("apid set to " + Config.apid);
     if (hostnameElm.value.length())
     {
-      Config.hostName = hostnameElm.value;
-      Serial.println("hostname set to " + Config.hostName);
+      hostName = hostnameElm.value;
     }
+    if (channelidElm.value.length()) 
+    {
+      channelId = channelidElm.value;
+    } else {
+      channelId = hostName;
+    }
+    Config.hostName = hostName;
+    Serial.println("hostname set to " + hostName);
     Config.bootUri = AC_ONBOOTURI_HOME;
     Config.homeUri = "/";
   }
@@ -261,9 +275,6 @@ void setup()
 
   // AutoConfig
   Config.title = "Temp Probes";
-  // Make the name using the last 2 dig the MAC Address.
-  hostName = HOSTNAME_BASE + WiFi.macAddress().substring(15);
-  //Config.hostName = hostName;
   Config.tickerPort = STATUS_LED;
   Config.ticker = true;
   Config.tickerOn = HIGH;
@@ -290,7 +301,8 @@ void setup()
   // numberOfDevices = sensors.getDeviceCount();
   numberOfDevices = discoverOneWireDevices();
 
-  pubTopicBase = "home/" + hostName + "/temperature/";
+  pubTopicBase = "home/" + channelId + "/temperature/";
+  Serial.println("MQTT topic: " + pubTopicBase);
   //subTopic = "home/" + hostName + "/output";
   subTopic = "home/esp32/output";
   mqttClient.setServer(mqtt_server, 1883);

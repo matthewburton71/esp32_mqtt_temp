@@ -7,8 +7,17 @@
 #include <WebServer.h>
 #include <AutoConnect.h>
 #include <PubSubClient.h>
+#include <SPIFFS.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#define GET_CHIPID() ((uint16_t)(ESP.getEfuseMac() >> 32))
+
+#define PARAM_FILE "/param.json"
+#define AUX_MQTTSETTING "/mqtt_setting"
+#define AUX_MQTTSAVE "/mqtt_save"
+#define AUX_MQTTCLEAR "/mqtt_clear"
+
+typedef WebServer WiFiWebServer;
 
 // Data wire is plugged TO GPIO 4
 #define ONE_WIRE_BUS 15
@@ -22,8 +31,13 @@ const int STATUS_LED = LED_BUILTIN;
 const char *mqtt_server = "192.168.86.5";
 
 String hostName;
+String serverName;
 String pubTopicBase;
 String subTopic;
+String channelId;
+String username;
+String password;
+unsigned int updateInterval = 0;
 
 // Setup a oneWire instance to communicate with any OneWire devices
 OneWire oneWire(ONE_WIRE_BUS);
@@ -85,12 +99,92 @@ int discoverOneWireDevices(void)
   return count;
 }
 
-void rootPage()
+String loadParams(AutoConnectAux &aux, PageArgument &args)
 {
-  char content[] = "Hello, world";
-  Server.send(200, "text/plain", content);
+  (void)(args);
+  File param = SPIFFS.open(PARAM_FILE, "r");
+  if (param)
+  {
+    aux.loadElement(param);
+    param.close();
+  }
+  else
+    Serial.println(PARAM_FILE " open failed");
+  return String("");
 }
 
+String saveParams(AutoConnectAux &aux, PageArgument &args)
+{
+  serverName = args.arg("mqttserver");
+  serverName.trim();
+
+  channelId = args.arg("channelid");
+  channelId.trim();
+
+  username = args.arg("username");
+  username.trim();
+
+  password = args.arg("password");
+  password.trim();
+
+  String upd = args.arg("period");
+  updateInterval = upd.substring(0, 2).toInt() * 1000;
+
+  String uniqueid = args.arg("uniqueid");
+
+  hostName = args.arg("hostname");
+  hostName.trim();
+
+  // The entered value is owned by AutoConnectAux of /mqtt_setting.
+  // To retrieve the elements of /mqtt_setting, it is necessary to get
+  // the AutoConnectAux object of /mqtt_setting.
+  File param = SPIFFS.open(PARAM_FILE, "w");
+  Portal.aux("/mqtt_setting")->saveElement(param, {"mqttserver", "channelid", "username", "password", "period", "uniqueid", "hostname"});
+  param.close();
+
+  // Echo back saved parameters to AutoConnectAux page.
+  AutoConnectText &echo = aux["parameters"].as<AutoConnectText>();
+  echo.value = "Server: " + serverName + "<br>";
+  echo.value += "Channel ID: " + channelId + "<br>";
+  echo.value += "User Name: " + username + "<br>";
+  echo.value += "Password: " + password + "<br>";
+  echo.value += "Update period: " + String(updateInterval / 1000) + " sec.<br>";
+  echo.value += "Use APID unique: " + uniqueid + "<br>";
+  echo.value += "ESP host name: " + hostName + "<br>";
+
+  return String("");
+}
+
+void rootPage()
+{
+  String content =
+      "<html>"
+      "<head>"
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+      "</head>"
+      "<body>"
+      "Tempeture"
+      "<p style=\"padding-top:10px;text-align:center\">" AUTOCONNECT_LINK(COG_24) "</p>"
+                                                                                  "</body>"
+                                                                                  "</html>";
+  Server.send(200, "text/html", content);
+}
+
+// Load AutoConnectAux JSON from SPIFFS.
+bool loadAux(const String auxName)
+{
+  bool rc = false;
+  String fn = auxName + ".json";
+  File fs = SPIFFS.open(fn.c_str(), "r");
+  if (fs)
+  {
+    rc = Portal.load(fs);
+    fs.close();
+  }
+  else
+    Serial.println("SPIFFS open failed: " + fn);
+  return rc;
+}
 
 void callback(char *topic, byte *message, unsigned int length)
 {
@@ -132,17 +226,53 @@ void setup()
 {
   delay(1000);
   Serial.begin(115200);
+  Serial.println();
+
+  // Serial.println("begin SPIFFS...");
+  SPIFFS.begin();
+
+  loadAux(AUX_MQTTSETTING);
+  loadAux(AUX_MQTTSAVE);
+
+  // Serial.println("loading config...");
+  AutoConnectAux *setting = Portal.aux(AUX_MQTTSETTING);
+  if (setting)
+  {
+    PageArgument args;
+    AutoConnectAux &mqtt_setting = *setting;
+    loadParams(mqtt_setting, args);
+    AutoConnectCheckbox &uniqueidElm = mqtt_setting["uniqueid"].as<AutoConnectCheckbox>();
+    AutoConnectInput &hostnameElm = mqtt_setting["hostname"].as<AutoConnectInput>();
+    if (uniqueidElm.checked)
+    {
+      Config.apid = String("ESP") + "-" + String(GET_CHIPID(), HEX);
+      Serial.println("apid set to " + Config.apid);
+    }
+    if (hostnameElm.value.length())
+    {
+      Config.hostName = hostnameElm.value;
+      Serial.println("hostname set to " + Config.hostName);
+    }
+    Config.bootUri = AC_ONBOOTURI_HOME;
+    Config.homeUri = "/";
+  }
+  else
+    Serial.println("aux. load error");
 
   // AutoConfig
   Config.title = "Temp Probes";
   // Make the name using the last 2 dig the MAC Address.
   hostName = HOSTNAME_BASE + WiFi.macAddress().substring(15);
-  Config.hostName = hostName;
+  //Config.hostName = hostName;
   Config.tickerPort = STATUS_LED;
   Config.ticker = true;
   Config.tickerOn = HIGH;
   Portal.config(Config);
 
+  Portal.on(AUX_MQTTSETTING, loadParams);
+  Portal.on(AUX_MQTTSAVE, saveParams);
+
+  // Serial.println("Portal begin...");
   Server.on("/", rootPage);
   if (Portal.begin())
   {

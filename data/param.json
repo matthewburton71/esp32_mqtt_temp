@@ -1,0 +1,27 @@
+[
+  {
+    "name": "mqttserver",
+    "type": "ACInput",
+    "value": "192.168.86.5",
+    "placeholder": "MQTT broker server",
+    "label": "Server"
+  },
+  {
+    "name": "channelid",
+    "type": "ACInput",
+    "value": "",
+    "label": "Channel ID"
+  },
+  {
+    "name": "username",
+    "type": "ACInput",
+    "value": "",
+    "label": "User Name"
+  },
+  {
+    "name": "password",
+    "type": "ACInput",
+    "value": "",
+    "label": "Password"
+  }
+]

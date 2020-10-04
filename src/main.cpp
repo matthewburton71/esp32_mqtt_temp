@@ -3,13 +3,13 @@
 *********/
 
 #include <Arduino.h>
-#include <WiFi.h>
-#include <WebServer.h>
 #include <AutoConnect.h>
+#include <DallasTemperature.h>
+#include <OneWire.h>
 #include <PubSubClient.h>
 #include <SPIFFS.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+#include <WebServer.h>
+#include <WiFi.h>
 #define GET_CHIPID() ((uint16_t)(ESP.getEfuseMac() >> 32))
 
 #define PARAM_FILE "/param.json"
@@ -21,6 +21,8 @@ typedef WebServer WiFiWebServer;
 
 // Data wire is plugged TO GPIO 4
 #define ONE_WIRE_BUS 15
+// Number of timers to try to reconnect to MQT befor restarting.
+#define RETRY_LIMIT 20
 
 #define HOSTNAME_BASE "ESP32-"
 const int WAIT = 10 * 1000; // 10 sec
@@ -63,31 +65,25 @@ const int ledPin = LED_BUILTIN;
 boolean led = false;
 
 //**************************
-int discoverOneWireDevices(void)
-{
+int discoverOneWireDevices(void) {
   byte addr[8];
   byte i;
   int count = 0;
 
   Serial.println("Looking for OneWire devices...");
-  while (oneWire.search(addr))
-  {
+  while (oneWire.search(addr)) {
     Serial.print("Found \'1-Wire\' device with address: ");
-    for (i = 0; i < 8; i++)
-    {
+    for (i = 0; i < 8; i++) {
       Serial.print("0x");
-      if (addr[i] < 16)
-      {
+      if (addr[i] < 16) {
         Serial.print('0');
       }
       Serial.print(addr[i], HEX);
-      if (i < 7)
-      {
+      if (i < 7) {
         Serial.print(", ");
       }
     }
-    if (OneWire::crc8(addr, 7) != addr[7])
-    {
+    if (OneWire::crc8(addr, 7) != addr[7]) {
       Serial.println("CRC is not valid!");
       return 0;
     }
@@ -99,22 +95,18 @@ int discoverOneWireDevices(void)
   return count;
 }
 
-String loadParams(AutoConnectAux &aux, PageArgument &args)
-{
+String loadParams(AutoConnectAux &aux, PageArgument &args) {
   (void)(args);
   File param = SPIFFS.open(PARAM_FILE, "r");
-  if (param)
-  {
+  if (param) {
     aux.loadElement(param);
     param.close();
-  }
-  else
+  } else
     Serial.println(PARAM_FILE " open failed");
   return String("");
 }
 
-String saveParams(AutoConnectAux &aux, PageArgument &args)
-{
+String saveParams(AutoConnectAux &aux, PageArgument &args) {
   serverName = args.arg("mqttserver");
   serverName.trim();
 
@@ -139,7 +131,9 @@ String saveParams(AutoConnectAux &aux, PageArgument &args)
   // To retrieve the elements of /mqtt_setting, it is necessary to get
   // the AutoConnectAux object of /mqtt_setting.
   File param = SPIFFS.open(PARAM_FILE, "w");
-  Portal.aux("/mqtt_setting")->saveElement(param, {"mqttserver", "channelid", "username", "password", "period", "uniqueid", "hostname"});
+  Portal.aux("/mqtt_setting")
+      ->saveElement(param, {"mqttserver", "channelid", "username", "password",
+                            "period", "uniqueid", "hostname"});
   param.close();
 
   // Echo back saved parameters to AutoConnectAux page.
@@ -155,8 +149,7 @@ String saveParams(AutoConnectAux &aux, PageArgument &args)
   return String("");
 }
 
-void rootPage()
-{
+void rootPage() {
   String content =
       "<html>"
       "<head>"
@@ -164,37 +157,33 @@ void rootPage()
       "</head>"
       "<body>"
       "Tempeture"
-      "<p style=\"padding-top:10px;text-align:center\">" AUTOCONNECT_LINK(COG_24) "</p>"
-                                                                                  "</body>"
-                                                                                  "</html>";
+      "<p style=\"padding-top:10px;text-align:center\">" AUTOCONNECT_LINK(
+          COG_24) "</p>"
+                  "</body>"
+                  "</html>";
   Server.send(200, "text/html", content);
 }
 
 // Load AutoConnectAux JSON from SPIFFS.
-bool loadAux(const String auxName)
-{
+bool loadAux(const String auxName) {
   bool rc = false;
   String fn = auxName + ".json";
   File fs = SPIFFS.open(fn.c_str(), "r");
-  if (fs)
-  {
+  if (fs) {
     rc = Portal.load(fs);
     fs.close();
-  }
-  else
+  } else
     Serial.println("SPIFFS open failed: " + fn);
   return rc;
 }
 
-void callback(char *topic, byte *message, unsigned int length)
-{
+void callback(char *topic, byte *message, unsigned int length) {
   Serial.print("Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");
   String messageTemp;
 
-  for (int i = 0; i < length; i++)
-  {
+  for (int i = 0; i < length; i++) {
     Serial.print((char)message[i]);
     messageTemp += (char)message[i];
   }
@@ -205,16 +194,12 @@ void callback(char *topic, byte *message, unsigned int length)
   // If a message is received on the topic esp32/output,
   //  you check if the message is either "on" or "off".
   // Changes the output state according to the message
-  if (String(topic) == subTopic)
-  {
+  if (String(topic) == subTopic) {
     Serial.print("Changing output to ");
-    if (messageTemp == "on")
-    {
+    if (messageTemp == "on") {
       Serial.println("on");
       digitalWrite(ledPin, HIGH);
-    }
-    else if (messageTemp == "off")
-    {
+    } else if (messageTemp == "off") {
       Serial.println("off");
       digitalWrite(ledPin, LOW);
     }
@@ -222,8 +207,7 @@ void callback(char *topic, byte *message, unsigned int length)
 }
 //**************************
 
-void setup()
-{
+void setup() {
   delay(1000);
   Serial.begin(115200);
   Serial.println();
@@ -241,26 +225,25 @@ void setup()
 
   // Serial.println("loading config...");
   AutoConnectAux *setting = Portal.aux(AUX_MQTTSETTING);
-  if (setting)
-  {
+  if (setting) {
     PageArgument args;
     AutoConnectAux &mqtt_setting = *setting;
     loadParams(mqtt_setting, args);
-    AutoConnectCheckbox &uniqueidElm = mqtt_setting["uniqueid"].as<AutoConnectCheckbox>();
-    AutoConnectInput &hostnameElm = mqtt_setting["hostname"].as<AutoConnectInput>();
-    AutoConnectInput &channelidElm = mqtt_setting["channelid"].as<AutoConnectInput>();
-    if (uniqueidElm.checked)
-    {
+    AutoConnectCheckbox &uniqueidElm =
+        mqtt_setting["uniqueid"].as<AutoConnectCheckbox>();
+    AutoConnectInput &hostnameElm =
+        mqtt_setting["hostname"].as<AutoConnectInput>();
+    AutoConnectInput &channelidElm =
+        mqtt_setting["channelid"].as<AutoConnectInput>();
+    if (uniqueidElm.checked) {
       // Config.apid = String("ESP") + "-" + String(GET_CHIPID(), HEX);
       Config.apid = hostName;
     }
     Serial.println("apid set to " + Config.apid);
-    if (hostnameElm.value.length())
-    {
+    if (hostnameElm.value.length()) {
       hostName = hostnameElm.value;
     }
-    if (channelidElm.value.length()) 
-    {
+    if (channelidElm.value.length()) {
       channelId = channelidElm.value;
     } else {
       channelId = hostName;
@@ -269,9 +252,9 @@ void setup()
     Serial.println("hostname set to " + hostName);
     Config.bootUri = AC_ONBOOTURI_HOME;
     Config.homeUri = "/";
-  }
-  else
+  } else {
     Serial.println("aux. load error");
+  }
 
   // AutoConfig
   Config.title = "Temp Probes";
@@ -285,8 +268,7 @@ void setup()
 
   // Serial.println("Portal begin...");
   Server.on("/", rootPage);
-  if (Portal.begin())
-  {
+  if (Portal.begin()) {
     Serial.println("HTTP server:" + WiFi.localIP().toString());
   }
   Serial.print("MAC address: ");
@@ -303,7 +285,7 @@ void setup()
 
   pubTopicBase = "home/" + channelId + "/temperature/";
   Serial.println("MQTT topic: " + pubTopicBase);
-  //subTopic = "home/" + hostName + "/output";
+  // subTopic = "home/" + hostName + "/output";
   subTopic = "home/esp32/output";
   mqttClient.setServer(mqtt_server, 1883);
   mqttClient.setCallback(callback);
@@ -311,30 +293,36 @@ void setup()
   pinMode(ledPin, OUTPUT);
 }
 
-void mqttConnect()
-{
+void mqttConnect() {
+  int failCount = 0;
   // Loop until we're reconnected
-  while (!mqttClient.connected())
-  {
+  while (!mqttClient.connected()) {
     // flash the led
     led = !led;
     digitalWrite(ledPin, (led) ? HIGH : LOW);
 
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
-    if (mqttClient.connect(hostName.c_str()))
-    {
+    if (mqttClient.connect(hostName.c_str())) {
       Serial.println("connected");
       // Subscribe
       mqttClient.subscribe(subTopic.c_str());
-    }
-    else
-    {
+    } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
+      if(!WiFi.isConnected()) {
+        //
+        Serial.println(" WiFi not connected - reconnect.");
+        WiFi.reconnect();
+      }
       Serial.println(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       delay(5000);
+    }
+    failCount++;
+    // After failing to connect manny time reboot
+    if(failCount > RETRY_LIMIT) {
+      ESP.restart();
     }
   }
   // turn led off
@@ -342,19 +330,16 @@ void mqttConnect()
   digitalWrite(ledPin, LOW);
 }
 
-void loop()
-{
+void loop() {
   Portal.handleClient();
 
-  if (!mqttClient.connected())
-  {
+  if (!mqttClient.connected()) {
     mqttConnect();
   }
   mqttClient.loop();
 
   long now = millis();
-  if (now - lastMsg > WAIT)
-  {
+  if (now - lastMsg > WAIT) {
     Serial.println("Poll temps.");
 
     lastMsg = now;
@@ -362,33 +347,25 @@ void loop()
     // Temperature in Celsius
     sensors.requestTemperatures(); // Send the command to get temperatures
 
-    if (numberOfDevices == 0)
-    { // no temp probes found.
+    if (numberOfDevices == 0) { // no temp probes found.
       led = true;
       digitalWrite(ledPin, HIGH);
-    }
-    else
-    {
+    } else {
       led = false;
       digitalWrite(ledPin, LOW);
     }
     // Loop through each device, print out temperature data
-    for (int i = 0; i < numberOfDevices; i++)
-    {
+    for (int i = 0; i < numberOfDevices; i++) {
       // Search the wire for address
-      if (sensors.getAddress(tempDeviceAddress, i))
-      {
+      if (sensors.getAddress(tempDeviceAddress, i)) {
         // Output the device ID
         Serial.print("Temperature for device: ");
         Serial.println(i, DEC);
         // Print the data
         temperature = sensors.getTempF(tempDeviceAddress);
-        if (temperature > 184)
-        {
+        if (temperature > 184) {
           Serial.print("Invalid temperature - skipping.");
-        }
-        else
-        {
+        } else {
           Serial.print(" Temp F: ");
           Serial.println(temperature);
 
@@ -396,8 +373,8 @@ void loop()
           // Convert the value to a char array
           char tempString[8];
           dtostrf(temperature, 3, 2, tempString);
-          //sprintf(topic, topicBase, i);
-          //mqttClient.publish(topic, tempString);
+          // sprintf(topic, topicBase, i);
+          // mqttClient.publish(topic, tempString);
           String topic = pubTopicBase + String(i);
           mqttClient.publish(topic.c_str(), tempString);
           Serial.print(topic);

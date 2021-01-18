@@ -58,7 +58,7 @@ AutoConnectConfig Config;
 long lastMsg = 0;
 // Number of temperature devices found
 int numberOfDevices;
-float temperature;
+float temperature = 60.0;
 
 // LED Pin
 const int ledPin = LED_BUILTIN;
@@ -150,17 +150,21 @@ String saveParams(AutoConnectAux &aux, PageArgument &args) {
 }
 
 void rootPage() {
+  String val = String(temperature);
   String content =
       "<html>"
       "<head>"
+      "<meta http-equiv=\"refresh\" content=\"5\">"
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
       "</head>"
       "<body>"
-      "Tempeture"
-      "<p style=\"padding-top:10px;text-align:center\">" AUTOCONNECT_LINK(
-          COG_24) "</p>"
-                  "</body>"
-                  "</html>";
+      "Tempeture " +
+      val +
+      "<p "
+      "style=\"padding-top:10px;text-align:"
+      "center\">" AUTOCONNECT_LINK(COG_24) "</p>"
+                                           "</body>"
+                                           "</html>";
   Server.send(200, "text/html", content);
 }
 
@@ -282,6 +286,7 @@ void setup() {
   // Grab a count of devices on the wire
   // numberOfDevices = sensors.getDeviceCount();
   numberOfDevices = discoverOneWireDevices();
+  Serial.println("Number of devices found: " + numberOfDevices);
 
   pubTopicBase = "home/" + channelId + "/temperature/";
   Serial.println("MQTT topic: " + pubTopicBase);
@@ -310,7 +315,7 @@ void mqttConnect() {
     } else {
       Serial.print("failed, rc=");
       Serial.print(mqttClient.state());
-      if(!WiFi.isConnected()) {
+      if (!WiFi.isConnected()) {
         //
         Serial.println(" WiFi not connected - reconnect.");
         WiFi.reconnect();
@@ -321,7 +326,7 @@ void mqttConnect() {
     }
     failCount++;
     // After failing to connect manny time reboot
-    if(failCount > RETRY_LIMIT) {
+    if (failCount > RETRY_LIMIT) {
       ESP.restart();
     }
   }
